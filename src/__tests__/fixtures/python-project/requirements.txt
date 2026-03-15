@@ -1,0 +1,8 @@
+# Web framework
+flask>=2.0
+requests==2.31.0
+
+# Ignore these
+-r base.txt
+# another comment
+numpy>=1.24

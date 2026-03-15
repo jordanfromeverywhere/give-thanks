@@ -1,0 +1,6 @@
+[project]
+name = "my-project"
+dependencies = [
+    "httpx>=0.24",
+    "pydantic>=2.0",
+]

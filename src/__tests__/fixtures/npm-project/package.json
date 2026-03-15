@@ -1,0 +1,10 @@
+{
+  "name": "test-project",
+  "dependencies": {
+    "chalk": "^5.0.0",
+    "commander": "^11.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^1.0.0"
+  }
+}
