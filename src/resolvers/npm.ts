@@ -10,7 +10,9 @@ export const resolveNpm: Resolver = {
 
   async resolve(input: string) {
     try {
-      const res = await fetch(`https://registry.npmjs.org/${input}`);
+      const res = await fetch(`https://registry.npmjs.org/${input}`, {
+        signal: AbortSignal.timeout(10000),
+      });
       if (!res.ok) return null;
 
       const data = await res.json();

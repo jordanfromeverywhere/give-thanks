@@ -10,7 +10,9 @@ export const resolvePypi: Resolver = {
 
   async resolve(input: string) {
     try {
-      const res = await fetch(`https://pypi.org/pypi/${input}/json`);
+      const res = await fetch(`https://pypi.org/pypi/${input}/json`, {
+        signal: AbortSignal.timeout(10000),
+      });
       if (!res.ok) return null;
 
       const data = await res.json();

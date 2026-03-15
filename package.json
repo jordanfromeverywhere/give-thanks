@@ -4,6 +4,16 @@
   "description": "A CLI for thanking open source maintainers — star repos and post gratitude in GitHub Discussions",
   "type": "module",
   "license": "MIT",
+  "author": "Jordan Franznick <cfranznick@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jordanfromeverywhere/give-thanks.git"
+  },
+  "homepage": "https://github.com/jordanfromeverywhere/give-thanks#readme",
+  "bugs": {
+    "url": "https://github.com/jordanfromeverywhere/give-thanks/issues"
+  },
+  "types": "./dist/cli.d.ts",
   "bin": {
     "give-thanks": "./dist/cli.js"
   },

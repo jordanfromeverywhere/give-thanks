@@ -103,6 +103,28 @@ describe("npm resolver", () => {
     const result = await resolveNpm.resolve("chalk");
     expect(result).toBeNull();
   });
+
+  it("returns null on timeout (AbortError)", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(
+      new DOMException("The operation was aborted", "AbortError")
+    );
+
+    const result = await resolveNpm.resolve("slow-pkg");
+    expect(result).toBeNull();
+  });
+
+  it("passes signal to fetch", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ repository: { url: "git+https://github.com/user/repo.git" } }),
+    } as Response);
+
+    await resolveNpm.resolve("chalk");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
 });
 
 describe("pypi resolver", () => {
@@ -172,5 +194,31 @@ describe("pypi resolver", () => {
 
     const result = await resolvePypi.resolve("nonexistent");
     expect(result).toBeNull();
+  });
+
+  it("returns null on timeout (AbortError)", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(
+      new DOMException("The operation was aborted", "AbortError")
+    );
+
+    const result = await resolvePypi.resolve("slow-pkg");
+    expect(result).toBeNull();
+  });
+
+  it("passes signal to fetch", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        info: {
+          project_urls: { Source: "https://github.com/user/repo" },
+        },
+      }),
+    } as Response);
+
+    await resolvePypi.resolve("requests");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
   });
 });

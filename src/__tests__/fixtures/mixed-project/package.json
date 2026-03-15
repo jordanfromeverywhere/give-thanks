@@ -1,0 +1,6 @@
+{
+  "name": "mixed-project",
+  "dependencies": {
+    "express": "^4.0.0"
+  }
+}

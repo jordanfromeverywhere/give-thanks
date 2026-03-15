@@ -1,11 +1,7 @@
 import { Octokit } from "@octokit/rest";
 import { select, log } from "@clack/prompts";
 import { addToHistory } from "./history.js";
-
-interface RepoRef {
-  owner: string;
-  repo: string;
-}
+import type { RepoRef } from "./resolvers/index.js";
 
 interface ThankMessage {
   title: string;
@@ -19,13 +15,33 @@ interface ThankResult {
   summary: string;
 }
 
+interface ThankOptions {
+  dryRun?: boolean;
+  packageName?: string;
+}
+
 export async function thankPackage(
   token: string,
   ref: RepoRef,
-  message: ThankMessage
+  message: ThankMessage,
+  options: ThankOptions = {}
 ): Promise<ThankResult> {
+  const { dryRun = false, packageName } = options;
+  const pkg = packageName || ref.repo;
   const octokit = new Octokit({ auth: token });
   const { owner, repo } = ref;
+
+  // Dry run — just show what would happen
+  if (dryRun) {
+    log.info(`Would star ${owner}/${repo}`);
+    log.info(`Would post discussion: "${message.title}"`);
+    log.message(message.body);
+    return {
+      starred: false,
+      messageSent: false,
+      summary: `[dry-run] Would thank ${owner}/${repo}`,
+    };
+  }
 
   // Always star
   let starred = false;
@@ -33,6 +49,9 @@ export async function thankPackage(
     await octokit.activity.starRepoForAuthenticatedUser({ owner, repo });
     starred = true;
   } catch (err: any) {
+    if (isRateLimited(err)) {
+      return handleRateLimit(err);
+    }
     if (err.status !== 304) {
       log.warn(`Could not star ${owner}/${repo}: ${err.message}`);
     } else {
@@ -51,7 +70,7 @@ export async function thankPackage(
   if (discussionResult.sent) {
     await addToHistory({
       repo: `${owner}/${repo}`,
-      package: repo,
+      package: pkg,
       ecosystem: "unknown",
       thankedAt: new Date().toISOString(),
       discussionUrl: discussionResult.url,
@@ -86,7 +105,7 @@ export async function thankPackage(
 
       await addToHistory({
         repo: `${owner}/${repo}`,
-        package: repo,
+        package: pkg,
         ecosystem: "unknown",
         thankedAt: new Date().toISOString(),
         discussionUrl: data.html_url,
@@ -99,13 +118,16 @@ export async function thankPackage(
         summary: `Starred and opened a thank-you issue on ${owner}/${repo}`,
       };
     } catch (err: any) {
+      if (isRateLimited(err)) {
+        return handleRateLimit(err);
+      }
       log.warn(`Could not open issue: ${err.message}`);
     }
   }
 
   await addToHistory({
     repo: `${owner}/${repo}`,
-    package: repo,
+    package: pkg,
     ecosystem: "unknown",
     thankedAt: new Date().toISOString(),
   });
@@ -114,6 +136,23 @@ export async function thankPackage(
     starred,
     messageSent: false,
     summary: `Starred ${owner}/${repo} (no message posted)`,
+  };
+}
+
+function isRateLimited(err: any): boolean {
+  return err.status === 403 || err.status === 429;
+}
+
+function handleRateLimit(err: any): ThankResult {
+  const resetHeader = err.response?.headers?.["x-ratelimit-reset"];
+  const retryMsg = resetHeader
+    ? ` Try again after ${new Date(Number(resetHeader) * 1000).toLocaleTimeString()}.`
+    : "";
+  log.error(`Rate limited by GitHub.${retryMsg}`);
+  return {
+    starred: false,
+    messageSent: false,
+    summary: `Rate limited — try again later`,
   };
 }
 

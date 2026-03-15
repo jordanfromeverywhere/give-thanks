@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { scanPackageJson } from "../scan/package-json.js";
 import { scanRequirements } from "../scan/requirements.js";
+import { scanDependencies } from "../scan/index.js";
 import { join } from "node:path";
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
@@ -48,5 +49,31 @@ describe("requirements scanner", () => {
     const deps = await scanRequirements.scan(join(FIXTURES, "pyproject-project"));
     expect(deps).toContain("httpx");
     expect(deps).toContain("pydantic");
+  });
+});
+
+describe("scanDependencies (integration)", () => {
+  it("scans mixed npm + python project", async () => {
+    const deps = await scanDependencies(join(FIXTURES, "mixed-project"));
+    expect(deps).toContain("express");
+    expect(deps).toContain("django");
+    expect(deps).toContain("celery");
+  });
+
+  it("deduplicates dependencies across scanners", async () => {
+    const deps = await scanDependencies(join(FIXTURES, "mixed-project"));
+    const unique = new Set(deps);
+    expect(deps.length).toBe(unique.size);
+  });
+
+  it("returns sorted results", async () => {
+    const deps = await scanDependencies(join(FIXTURES, "mixed-project"));
+    const sorted = [...deps].sort();
+    expect(deps).toEqual(sorted);
+  });
+
+  it("returns empty for empty project", async () => {
+    const deps = await scanDependencies(join(FIXTURES, "empty-project"));
+    expect(deps).toEqual([]);
   });
 });

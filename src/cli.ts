@@ -5,7 +5,7 @@ import { resolveRepo } from "./resolvers/index.js";
 import { scanDependencies } from "./scan/index.js";
 import { getHistory, hasBeenThanked, printHistory } from "./history.js";
 import { buildMessage } from "./message.js";
-import { confirm, multiselect, select } from "@clack/prompts";
+import { multiselect } from "@clack/prompts";
 import { intro, outro, spinner, log, isCancel } from "@clack/prompts";
 
 const program = new Command();
@@ -24,6 +24,7 @@ program
   .option("--scan [dir]", "Scan project dependencies and pick which to thank")
   .option("--history", "Show your gratitude history")
   .option("--force", "Thank even if already thanked")
+  .option("--dry-run", "Show what would happen without posting")
   .action(async (pkg: string | undefined, opts) => {
     intro("give-thanks");
 
@@ -56,7 +57,7 @@ program
 async function handleSingleThank(
   token: string,
   pkg: string,
-  opts: { usedFor?: string; message?: string; force?: boolean }
+  opts: { usedFor?: string; message?: string; force?: boolean; dryRun?: boolean }
 ) {
   const s = spinner();
 
@@ -93,7 +94,10 @@ async function handleSingleThank(
 
   // Thank
   s.start(`Thanking ${resolved.owner}/${resolved.repo}...`);
-  const result = await thankPackage(token, resolved, message);
+  const result = await thankPackage(token, resolved, message, {
+    dryRun: opts.dryRun,
+    packageName: pkg,
+  });
   s.stop(result.summary);
 
   outro("Done!");
@@ -102,7 +106,7 @@ async function handleSingleThank(
 async function handleScan(
   token: string,
   dir: string,
-  opts: { usedFor?: string; message?: string; force?: boolean }
+  opts: { usedFor?: string; message?: string; force?: boolean; dryRun?: boolean }
 ) {
   const s = spinner();
   s.start("Scanning dependencies...");
