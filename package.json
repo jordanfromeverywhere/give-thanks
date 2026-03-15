@@ -15,7 +15,7 @@
   },
   "types": "./dist/cli.d.ts",
   "bin": {
-    "give-thanks": "./dist/cli.js"
+    "give-thanks": "dist/cli.js"
   },
   "scripts": {
     "build": "tsup",
@@ -41,7 +41,8 @@
   "dependencies": {
     "@clack/prompts": "^1.1.0",
     "@octokit/rest": "^22.0.1",
-    "commander": "^14.0.3"
+    "commander": "^14.0.3",
+    "resend": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

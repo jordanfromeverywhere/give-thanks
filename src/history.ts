@@ -9,6 +9,7 @@ export interface HistoryEntry {
   ecosystem: string;
   thankedAt: string;
   discussionUrl?: string;
+  channel?: string;
 }
 
 const HISTORY_DIR = join(homedir(), ".give-thanks");

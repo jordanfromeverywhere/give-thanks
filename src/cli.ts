@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { thankPackage } from "./github.js";
+import type { ProfileLinks } from "./github.js";
 import { authenticate } from "./auth.js";
 import { resolveRepo } from "./resolvers/index.js";
 import { scanDependencies } from "./scan/index.js";
@@ -25,7 +26,10 @@ program
   .option("--history", "Show your gratitude history")
   .option("--force", "Thank even if already thanked")
   .option("--dry-run", "Show what would happen without posting")
+  .option("--non-interactive", "Skip all prompts (auto-pick best channel)")
   .action(async (pkg: string | undefined, opts) => {
+    const nonInteractive = opts.nonInteractive || !process.stdin.isTTY;
+
     intro("give-thanks");
 
     if (opts.history) {
@@ -40,7 +44,10 @@ program
     }
 
     if (opts.scan !== undefined) {
-      await handleScan(token, opts.scan === true ? "." : opts.scan, opts);
+      await handleScan(token, opts.scan === true ? "." : opts.scan, {
+        ...opts,
+        nonInteractive,
+      });
       return;
     }
 
@@ -51,13 +58,19 @@ program
       process.exit(1);
     }
 
-    await handleSingleThank(token, pkg, opts);
+    await handleSingleThank(token, pkg, { ...opts, nonInteractive });
   });
 
 async function handleSingleThank(
   token: string,
   pkg: string,
-  opts: { usedFor?: string; message?: string; force?: boolean; dryRun?: boolean }
+  opts: {
+    usedFor?: string;
+    message?: string;
+    force?: boolean;
+    dryRun?: boolean;
+    nonInteractive?: boolean;
+  }
 ) {
   const s = spinner();
 
@@ -97,8 +110,12 @@ async function handleSingleThank(
   const result = await thankPackage(token, resolved, message, {
     dryRun: opts.dryRun,
     packageName: pkg,
+    nonInteractive: opts.nonInteractive,
   });
   s.stop(result.summary);
+
+  // Log profile links if present
+  logProfileLinks(result.profileLinks);
 
   outro("Done!");
 }
@@ -106,7 +123,13 @@ async function handleSingleThank(
 async function handleScan(
   token: string,
   dir: string,
-  opts: { usedFor?: string; message?: string; force?: boolean; dryRun?: boolean }
+  opts: {
+    usedFor?: string;
+    message?: string;
+    force?: boolean;
+    dryRun?: boolean;
+    nonInteractive?: boolean;
+  }
 ) {
   const s = spinner();
   s.start("Scanning dependencies...");
@@ -133,23 +156,45 @@ async function handleScan(
     return;
   }
 
-  const selected = await multiselect({
-    message: "Which packages do you want to thank?",
-    options: unthanked.map((d) => ({ value: d, label: d })),
-  });
+  let selected: string[];
 
-  if (isCancel(selected)) {
-    outro("Cancelled.");
-    return;
+  if (opts.nonInteractive) {
+    selected = unthanked;
+    log.info(`Auto-thanking all ${unthanked.length} unthanked dependencies`);
+  } else {
+    const picked = await multiselect({
+      message: "Which packages do you want to thank?",
+      options: unthanked.map((d) => ({ value: d, label: d })),
+    });
+
+    if (isCancel(picked)) {
+      outro("Cancelled.");
+      return;
+    }
+
+    selected = picked as string[];
   }
 
   let thankedCount = 0;
-  for (const pkg of selected as string[]) {
+  for (const pkg of selected) {
     await handleSingleThank(token, pkg, opts);
     thankedCount++;
   }
 
   outro(`Thanked ${thankedCount} maintainer${thankedCount === 1 ? "" : "s"} today!`);
+}
+
+function logProfileLinks(links?: ProfileLinks): void {
+  if (!links) return;
+
+  const entries: string[] = [];
+  if (links.email) entries.push(`     Email: ${links.email}`);
+  if (links.blog) entries.push(`     Blog: ${links.blog}`);
+  if (links.twitter) entries.push(`     Twitter: ${links.twitter}`);
+
+  if (entries.length > 0) {
+    log.info(`FYI, the maintainer also has:\n${entries.join("\n")}`);
+  }
 }
 
 program.parse();

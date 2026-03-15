@@ -1,6 +1,7 @@
 import { Octokit } from "@octokit/rest";
-import { select, log } from "@clack/prompts";
+import { log } from "@clack/prompts";
 import { addToHistory } from "./history.js";
+import { sendThankYouEmail } from "./email.js";
 import type { RepoRef } from "./resolvers/index.js";
 
 interface ThankMessage {
@@ -8,16 +9,25 @@ interface ThankMessage {
   body: string;
 }
 
-interface ThankResult {
+export interface ProfileLinks {
+  email?: string;
+  blog?: string;
+  twitter?: string;
+}
+
+export interface ThankResult {
   starred: boolean;
   messageSent: boolean;
   discussionUrl?: string;
   summary: string;
+  channel: "discussion" | "issue" | "email" | "star-only";
+  profileLinks?: ProfileLinks;
 }
 
-interface ThankOptions {
+export interface ThankOptions {
   dryRun?: boolean;
   packageName?: string;
+  nonInteractive?: boolean;
 }
 
 export async function thankPackage(
@@ -39,6 +49,7 @@ export async function thankPackage(
     return {
       starred: false,
       messageSent: false,
+      channel: "star-only",
       summary: `[dry-run] Would thank ${owner}/${repo}`,
     };
   }
@@ -59,13 +70,8 @@ export async function thankPackage(
     }
   }
 
-  // Try posting a Discussion
-  const discussionResult = await tryPostDiscussion(
-    octokit,
-    token,
-    ref,
-    message
-  );
+  // 1. Try Discussion
+  const discussionResult = await tryPostDiscussion(octokit, token, ref, message);
 
   if (discussionResult.sent) {
     await addToHistory({
@@ -74,67 +80,87 @@ export async function thankPackage(
       ecosystem: "unknown",
       thankedAt: new Date().toISOString(),
       discussionUrl: discussionResult.url,
+      channel: "discussion",
     });
 
     return {
       starred,
       messageSent: true,
       discussionUrl: discussionResult.url,
-      summary: `Starred and posted a thank-you to ${owner}/${repo}`,
+      channel: "discussion",
+      summary: `Starred and posted a thank-you discussion on ${owner}/${repo}`,
     };
   }
 
-  // Discussions not available — prompt user
-  const fallback = await select({
-    message: `Discussions aren't available on ${owner}/${repo}. What would you like to do?`,
-    options: [
-      { value: "issue", label: "Open an issue with your thank-you" },
-      { value: "skip", label: "Just star it (already done)" },
-    ],
-  });
+  // 2. Try Issue (automatic, no prompt)
+  const issueResult = await tryCreateIssue(octokit, ref, message);
 
-  if (fallback === "issue") {
-    try {
-      const { data } = await octokit.issues.create({
-        owner,
-        repo,
-        title: message.title,
-        body: message.body,
-        labels: ["thank-you"],
-      });
+  if (issueResult.sent) {
+    await addToHistory({
+      repo: `${owner}/${repo}`,
+      package: pkg,
+      ecosystem: "unknown",
+      thankedAt: new Date().toISOString(),
+      discussionUrl: issueResult.url,
+      channel: "issue",
+    });
 
+    return {
+      starred,
+      messageSent: true,
+      discussionUrl: issueResult.url,
+      channel: "issue",
+      summary: `Starred and opened a thank-you issue on ${owner}/${repo}`,
+    };
+  }
+
+  // 3. Fetch owner profile for email + profile links
+  const profile = await fetchOwnerProfile(octokit, owner);
+
+  // 4. Try email if public email + RESEND_API_KEY
+  if (profile.email) {
+    const emailSent = await sendThankYouEmail(
+      profile.email,
+      message.title,
+      message.body
+    );
+
+    if (emailSent) {
       await addToHistory({
         repo: `${owner}/${repo}`,
         package: pkg,
         ecosystem: "unknown",
         thankedAt: new Date().toISOString(),
-        discussionUrl: data.html_url,
+        channel: "email",
       });
 
       return {
         starred,
         messageSent: true,
-        discussionUrl: data.html_url,
-        summary: `Starred and opened a thank-you issue on ${owner}/${repo}`,
+        channel: "email",
+        profileLinks: profile,
+        summary: `Starred ${owner}/${repo} and emailed thanks to ${profile.email}`,
       };
-    } catch (err: any) {
-      if (isRateLimited(err)) {
-        return handleRateLimit(err);
-      }
-      log.warn(`Could not open issue: ${err.message}`);
     }
+
+    // No API key or send failed — log the address
+    log.info(`Maintainer's public email: ${profile.email}`);
   }
 
+  // 5. Star-only fallback
   await addToHistory({
     repo: `${owner}/${repo}`,
     package: pkg,
     ecosystem: "unknown",
     thankedAt: new Date().toISOString(),
+    channel: "star-only",
   });
 
   return {
     starred,
     messageSent: false,
+    channel: "star-only",
+    profileLinks: profile,
     summary: `Starred ${owner}/${repo} (no message posted)`,
   };
 }
@@ -152,6 +178,7 @@ function handleRateLimit(err: any): ThankResult {
   return {
     starred: false,
     messageSent: false,
+    channel: "star-only",
     summary: `Rate limited — try again later`,
   };
 }
@@ -165,7 +192,6 @@ async function tryPostDiscussion(
   const { owner, repo } = ref;
 
   try {
-    // Get repository ID and discussion categories via GraphQL
     const query = `
       query($owner: String!, $repo: String!) {
         repository(owner: $owner, name: $repo) {
@@ -190,14 +216,12 @@ async function tryPostDiscussion(
       return { sent: false };
     }
 
-    // Prefer "General" category, fall back to first available
     const categories = repoData.discussionCategories.nodes;
     const generalCategory = categories.find(
       (c: any) => c.name.toLowerCase() === "general"
     );
     const category = generalCategory || categories[0];
 
-    // Create discussion via GraphQL
     const mutation = `
       mutation($repoId: ID!, $categoryId: ID!, $title: String!, $body: String!) {
         createDiscussion(input: {
@@ -226,5 +250,49 @@ async function tryPostDiscussion(
     };
   } catch {
     return { sent: false };
+  }
+}
+
+async function tryCreateIssue(
+  octokit: Octokit,
+  ref: RepoRef,
+  message: ThankMessage
+): Promise<{ sent: boolean; url?: string }> {
+  const { owner, repo } = ref;
+
+  try {
+    const { data } = await octokit.issues.create({
+      owner,
+      repo,
+      title: message.title,
+      body: message.body,
+    });
+
+    return { sent: true, url: data.html_url };
+  } catch (err: any) {
+    if (err.status === 403 || err.status === 410) {
+      // Issues disabled or forbidden — graceful fallthrough
+      return { sent: false };
+    }
+    log.warn(`Could not open issue: ${err.message}`);
+    return { sent: false };
+  }
+}
+
+async function fetchOwnerProfile(
+  octokit: Octokit,
+  owner: string
+): Promise<ProfileLinks> {
+  try {
+    const { data } = await octokit.users.getByUsername({ username: owner });
+    return {
+      email: data.email || undefined,
+      blog: data.blog || undefined,
+      twitter: data.twitter_username
+        ? `@${data.twitter_username}`
+        : undefined,
+    };
+  } catch {
+    return {};
   }
 }
